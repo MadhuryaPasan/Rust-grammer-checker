@@ -21,7 +21,7 @@ WizardStyle=modern
 UninstallDisplayIcon={app}\{#AppExeName}
 
 [Files]
-Source: "..\app\target\dx\grammar-check\release\windows\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\app\target\dx\grammar-check\release\windows\app\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"

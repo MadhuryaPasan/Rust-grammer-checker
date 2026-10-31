@@ -63,6 +63,9 @@ jobs:
         run: |
           New-Item -ItemType Directory -Path release-assets -Force | Out-Null
           $buildDir = "app/target/dx/grammar-check/release/windows"
+          if (-not (Test-Path "$buildDir/app/grammar-check.exe")) {
+            throw "Expected Windows executable at $buildDir/app/grammar-check.exe"
+          }
           Compress-Archive `
             -Path "$buildDir/*" `
             -DestinationPath release-assets/grammar-check-windows-${env:RUNNER_ARCH}.zip

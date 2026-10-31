@@ -1,6 +1,6 @@
 [package]
 name = "grammar-check"
-version = "0.2.2"
+version = "0.2.3"
 authors = ["MadhuryaPasan <90153718+MadhuryaPasan@users.noreply.github.com>"]
 edition = "2021"
 
