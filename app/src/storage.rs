@@ -36,6 +36,8 @@ pub struct Settings {
     pub endpoint: String,
     pub temperature: String,
     pub thinking_enabled: bool,
+    #[serde(default = "default_theme")]
+    pub theme: String,
 }
 
 impl Default for Settings {
@@ -47,8 +49,13 @@ impl Default for Settings {
             endpoint: "http://localhost:11434".to_owned(),
             temperature: "0.1".to_owned(),
             thinking_enabled: false,
+            theme: default_theme(),
         }
     }
+}
+
+fn default_theme() -> String {
+    "light".to_owned()
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

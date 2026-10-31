@@ -4,6 +4,10 @@ pub enum Category {
     Spelling,
 }
 
+static US_HARPER: OnceLock<Mutex<LintGroup>> = OnceLock::new();
+static UK_HARPER: OnceLock<Mutex<LintGroup>> = OnceLock::new();
+static TYPOS_TOKENIZER: typos::tokens::Tokenizer = typos::tokens::Tokenizer::new();
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum EnglishVariant {
     #[default]
@@ -163,6 +167,56 @@ const RULES: &[Rule] = &[
         rule: "Subject–verb agreement",
         explanation: "The plural subject “they” takes “are”, not “is”.",
     },
+    Rule {
+        incorrect: "people thinks",
+        suggestion: "people think",
+        category: Category::Grammar,
+        rule: "Subject–verb agreement",
+        explanation: "The plural subject “people” takes “think”, not “thinks”.",
+    },
+    Rule {
+        incorrect: "it require",
+        suggestion: "it requires",
+        category: Category::Grammar,
+        rule: "Subject–verb agreement",
+        explanation: "The singular subject “it” takes “requires”, not “require”.",
+    },
+    Rule {
+        incorrect: "a man which",
+        suggestion: "a man who",
+        category: Category::Grammar,
+        rule: "Relative pronouns",
+        explanation: "Use “who” when referring to a person.",
+    },
+    Rule {
+        incorrect: "individuals whom find",
+        suggestion: "individuals who find",
+        category: Category::Grammar,
+        rule: "Relative pronouns",
+        explanation: "“Who” is the subject of the relative clause in this sentence.",
+    },
+    Rule {
+        incorrect: "would have practiced",
+        suggestion: "had practiced",
+        category: Category::Grammar,
+        rule: "Third conditional",
+        explanation:
+            "After “if” for an unreal past condition, use the past perfect “had practiced”.",
+    },
+    Rule {
+        incorrect: "none of the onlookers was",
+        suggestion: "none of the onlookers were",
+        category: Category::Grammar,
+        rule: "Subject–verb agreement",
+        explanation: "Here “onlookers” is plural, so “were” agrees with the subject.",
+    },
+    Rule {
+        incorrect: "lead to an embarrassing",
+        suggestion: "led to an embarrassing",
+        category: Category::Grammar,
+        rule: "Past-tense verbs",
+        explanation: "The past-tense verb is “led”, not “lead”.",
+    },
 ];
 
 const UK_SPELLINGS_FOR_US: &[Rule] = &[
@@ -285,6 +339,8 @@ pub fn analyze_with_variant(text: &str, variant: EnglishVariant) -> Vec<Issue> {
         })
         .collect::<Vec<_>>();
 
+    issues.extend(analyze_with_harper(text, variant));
+    issues.extend(analyze_with_typos(text));
     issues.sort_by_key(|issue| issue.start);
     let mut previous_end = 0;
     issues.retain(|issue| {
@@ -296,6 +352,133 @@ pub fn analyze_with_variant(text: &str, variant: EnglishVariant) -> Vec<Issue> {
         }
     });
     issues
+}
+
+fn analyze_with_harper(text: &str, variant: EnglishVariant) -> Vec<Issue> {
+    let document = HarperDocument::new_plain_english_curated(text);
+    let dialect = match variant {
+        EnglishVariant::UnitedStates => Dialect::American,
+        EnglishVariant::UnitedKingdom => Dialect::British,
+    };
+    let group = match variant {
+        EnglishVariant::UnitedStates => US_HARPER.get_or_init(|| {
+            Mutex::new(LintGroup::new_curated(
+                harper_core::spell::FstDictionary::curated(),
+                dialect,
+            ))
+        }),
+        EnglishVariant::UnitedKingdom => UK_HARPER.get_or_init(|| {
+            Mutex::new(LintGroup::new_curated(
+                harper_core::spell::FstDictionary::curated(),
+                dialect,
+            ))
+        }),
+    };
+    let mut group = group.lock().expect("Harper linter mutex was poisoned");
+    let source = document.get_source();
+    group
+        .lint(&document)
+        .into_iter()
+        .filter_map(|lint| {
+            if matches!(lint.lint_kind, harper_core::linting::LintKind::Spelling) {
+                return None;
+            }
+            let suggestion = lint.suggestions.first()?;
+            let replacement = match suggestion {
+                Suggestion::ReplaceWith(chars) => chars.iter().collect::<String>(),
+                Suggestion::InsertAfter(chars) => {
+                    let mut replacement = lint.get_str(source);
+                    replacement.extend(chars);
+                    replacement
+                }
+                Suggestion::Remove => String::new(),
+            };
+            let start = char_to_byte_offset(text, lint.span.start)?;
+            let end = char_to_byte_offset(text, lint.span.end)?;
+            if start == end || !has_word_boundaries(text, start, end) {
+                return None;
+            }
+            Some(Issue {
+                start,
+                end,
+                incorrect: text[start..end].to_owned(),
+                suggestion: replacement,
+                category: if matches!(lint.lint_kind, harper_core::linting::LintKind::Spelling) {
+                    Category::Spelling
+                } else {
+                    Category::Grammar
+                },
+                rule: format!("Harper: {:?}", lint.lint_kind),
+                explanation: lint.message,
+            })
+        })
+        .collect()
+}
+
+fn analyze_with_typos(text: &str) -> Vec<Issue> {
+    typos::check_str(text, &TYPOS_TOKENIZER, &TyposDictionary)
+        .filter_map(|typo| {
+            let start = typo.byte_offset;
+            let end = start + typo.typo.len();
+            if text[..start]
+                .chars()
+                .next_back()
+                .is_some_and(char::is_alphanumeric)
+                || text[end..]
+                    .chars()
+                    .next()
+                    .is_some_and(char::is_alphanumeric)
+            {
+                return None;
+            }
+            let replacement = match typo.corrections {
+                typos::Status::Corrections(corrections) => corrections.first()?.to_string(),
+                _ => return None,
+            };
+            Some(Issue {
+                start,
+                end,
+                incorrect: typo.typo.into_owned(),
+                suggestion: replacement,
+                category: Category::Spelling,
+                rule: "Common spelling".to_owned(),
+                explanation: "This word is not a standard spelling. Review the suggested correction in context."
+                    .to_owned(),
+            })
+        })
+        .collect()
+}
+
+struct TyposDictionary;
+
+impl typos::Dictionary for TyposDictionary {
+    fn correct_ident<'s>(
+        &'s self,
+        _ident: typos::tokens::Identifier<'_>,
+    ) -> Option<typos::Status<'s>> {
+        None
+    }
+
+    fn correct_word<'s>(&'s self, word: typos::tokens::Word<'_>) -> Option<typos::Status<'s>> {
+        let key = unicase::UniCase::new(word.token());
+        let corrections = typos_dict::WORD.find(&key)?;
+        Some(typos::Status::Corrections(
+            corrections
+                .iter()
+                .map(|correction| std::borrow::Cow::Borrowed(*correction))
+                .collect(),
+        ))
+    }
+}
+
+fn char_to_byte_offset(text: &str, char_offset: usize) -> Option<usize> {
+    if char_offset == text.chars().count() {
+        Some(text.len())
+    } else {
+        text.char_indices()
+            .nth(char_offset)
+            .map(|(offset, _)| offset)
+    }
 }
 
 fn has_word_boundaries(text: &str, start: usize, end: usize) -> bool {
@@ -356,6 +539,29 @@ mod tests {
     }
 
     #[test]
+    fn catches_common_sentence_level_errors() {
+        let issues = analyze(
+            "People thinks it require practice. I saw a man which was helpful. \
+             If he would have practiced, he might have lead to an embarrassing situation.",
+        );
+        let incorrect = issues
+            .iter()
+            .map(|issue| issue.incorrect.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            incorrect,
+            vec![
+                "People thinks",
+                "it require",
+                "a man which",
+                "would have practiced",
+                "lead to an embarrassing"
+            ]
+        );
+    }
+
+    #[test]
     fn applies_us_and_uk_spellings_without_flagging_the_selected_variant() {
         let us_issues = analyze_with_variant(
             "The colour was my favourite at the centre.",
@@ -388,3 +594,8 @@ mod tests {
         );
     }
 }
+use harper_core::{
+    linting::{LintGroup, Linter, Suggestion},
+    Dialect, Document as HarperDocument,
+};
+use std::sync::{Mutex, OnceLock};

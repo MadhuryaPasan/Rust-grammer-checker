@@ -9,6 +9,31 @@ struct HighlightSegment {
     issue: Option<usize>,
 }
 
+fn highlight_segments(text: &str, issues: &[Issue]) -> Vec<HighlightSegment> {
+    let mut segments = Vec::with_capacity(issues.len() * 2 + 1);
+    let mut cursor = 0;
+    for (index, issue) in issues.iter().enumerate() {
+        if issue.start > cursor {
+            segments.push(HighlightSegment {
+                text: text[cursor..issue.start].to_owned(),
+                issue: None,
+            });
+        }
+        segments.push(HighlightSegment {
+            text: text[issue.start..issue.end].to_owned(),
+            issue: Some(index),
+        });
+        cursor = issue.end;
+    }
+    if cursor < text.len() {
+        segments.push(HighlightSegment {
+            text: text[cursor..].to_owned(),
+            issue: None,
+        });
+    }
+    segments
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Page {
     Editor,
@@ -36,35 +61,6 @@ enum AiStatus {
     Checking,
     Complete,
     Error,
-}
-
-fn highlight_segments(text: &str, issues: &[Issue]) -> Vec<HighlightSegment> {
-    let mut segments = Vec::with_capacity(issues.len() * 2 + 1);
-    let mut cursor = 0;
-
-    for (index, issue) in issues.iter().enumerate() {
-        if issue.start > cursor {
-            segments.push(HighlightSegment {
-                text: text[cursor..issue.start].to_owned(),
-                issue: None,
-            });
-        }
-
-        segments.push(HighlightSegment {
-            text: text[issue.start..issue.end].to_owned(),
-            issue: Some(index),
-        });
-        cursor = issue.end;
-    }
-
-    if cursor < text.len() {
-        segments.push(HighlightSegment {
-            text: text[cursor..].to_owned(),
-            issue: None,
-        });
-    }
-
-    segments
 }
 
 fn update_document(mut store: Signal<Store>, id: &str, update: impl FnOnce(&mut Document)) -> bool {
@@ -165,6 +161,7 @@ pub fn Home() -> Element {
     let mut delete_target = use_signal(|| None::<String>);
     let mut page = use_signal(|| Page::Editor);
     let mut active_issue = use_signal(|| Some(0_usize));
+    let mut lesson_open = use_signal(|| false);
     let mut filter = use_signal(|| "All".to_owned());
     let mut settings_open = use_signal(|| false);
     let mut settings_saved = use_signal(|| false);
@@ -175,6 +172,7 @@ pub fn Home() -> Element {
     let mut ai_issues = use_signal(Vec::<Issue>::new);
     let mut ai_status = use_signal(|| AiStatus::Idle);
     let mut ai_message = use_signal(String::new);
+    let mut ai_revision = use_signal(|| 0_u64);
     let save_status = use_signal(|| initial_status);
     let save_message = use_signal(|| initial_message);
     let save_revision = use_signal(|| 0_u64);
@@ -198,8 +196,8 @@ pub fn Home() -> Element {
         .unwrap_or_else(|| "Untitled document".to_owned());
     let active_id = active_document.as_ref().map(|document| document.id.clone());
     let current_settings = current_store.settings.clone();
+    let is_dark_theme = current_settings.theme == "dark";
     let english_variant = EnglishVariant::from_setting(&current_settings.english_variant);
-
     let local_issues = analyze_with_variant(&current_text, english_variant);
     let mut issues = local_issues.clone();
     for issue in ai_issues() {
@@ -247,6 +245,24 @@ pub fn Home() -> Element {
     let character_count = current_text.chars().count();
     let selected = issues.get(selected_index);
     let score = 100_usize.saturating_sub(issues.len() * 4);
+    let editor_text_revision = current_text.len();
+    use_effect(move || {
+        let _ = editor_text_revision;
+        document::eval(
+            r#"
+            const input = document.getElementById("writing-input");
+            const highlight = document.getElementById("writing-highlight");
+            if (input && highlight) {
+                input.onscroll = () => {
+                    highlight.scrollTop = input.scrollTop;
+                    highlight.scrollLeft = input.scrollLeft;
+                };
+                input.onscroll();
+            }
+            "#,
+        );
+    });
+
     let current_provider = current_settings.provider.clone();
     let delete_confirmation = delete_target().map(|target_id| {
         let target_title = documents
@@ -263,11 +279,11 @@ pub fn Home() -> Element {
     let is_saving = save_status() == SaveStatus::Saving;
 
     rsx! {
-        main { class: "app-shell",
+        main { class: if is_dark_theme { "app-shell theme-dark" } else { "app-shell" },
             aside { class: "left-rail",
                 div { class: "brand",
                     span { class: "brand-mark", "gc" }
-                    span { "Grammar Check" }
+                    span { "WordGlow" }
                 }
 
                 div { class: "rail-section-label", "YOUR WRITING" }
@@ -302,6 +318,7 @@ pub fn Home() -> Element {
                             ai_issues.set(Vec::new());
                             ai_status.set(AiStatus::Idle);
                             ai_message.set(String::new());
+                            ai_revision.set(ai_revision() + 1);
                             schedule_save(store, save_status, save_message, save_revision);
                         },
                         span { "＋" }
@@ -345,6 +362,23 @@ pub fn Home() -> Element {
                             span { class: "button-icon", "⚙" }
                             "AI settings"
                         }
+                        button {
+                            class: "button button-quiet theme-toggle",
+                            title: if is_dark_theme { "Switch to light theme" } else { "Switch to dark theme" },
+                            aria_label: if is_dark_theme { "Switch to light theme" } else { "Switch to dark theme" },
+                            onclick: move |_| {
+                                let mut current = store();
+                                current.settings.theme = if current.settings.theme == "dark" {
+                                    "light".to_owned()
+                                } else {
+                                    "dark".to_owned()
+                                };
+                                store.set(current);
+                                schedule_save(store, save_status, save_message, save_revision);
+                            },
+                            span { class: "button-icon", if is_dark_theme { "☀" } else { "☾" } }
+                            if is_dark_theme { "Light" } else { "Dark" }
+                        }
                     }
                 }
 
@@ -370,6 +404,7 @@ pub fn Home() -> Element {
                                     ai_issues.set(Vec::new());
                                     ai_status.set(AiStatus::Idle);
                                     ai_message.set(String::new());
+                                    ai_revision.set(ai_revision() + 1);
                                     schedule_save(store, save_status, save_message, save_revision);
                                 },
                                 "＋ New document"
@@ -399,6 +434,7 @@ pub fn Home() -> Element {
                                                     ai_issues.set(Vec::new());
                                                     ai_status.set(AiStatus::Idle);
                                                     ai_message.set(String::new());
+                                                    ai_revision.set(ai_revision() + 1);
                                                     page.set(Page::Editor);
                                                 }
                                             },
@@ -461,6 +497,7 @@ pub fn Home() -> Element {
                                         title: "Send this document to your selected provider for an AI grammar check",
                                         onclick: {
                                             let document_text = current_text.clone();
+                                            let request_revision = ai_revision();
                                             move |_| {
                                                 let document_text = document_text.clone();
                                                 async move {
@@ -485,6 +522,9 @@ pub fn Home() -> Element {
                                                 .await
                                                 {
                                                     Ok(suggestions) => {
+                                                        if ai_revision() != request_revision {
+                                                            return;
+                                                        }
                                                         let variant = EnglishVariant::from_setting(
                                                             &settings.english_variant,
                                                         );
@@ -506,6 +546,9 @@ pub fn Home() -> Element {
                                                         ));
                                                     }
                                                     Err(error) => {
+                                                        if ai_revision() != request_revision {
+                                                            return;
+                                                        }
                                                         ai_status.set(AiStatus::Error);
                                                         ai_message.set(error);
                                                     }
@@ -531,6 +574,7 @@ pub fn Home() -> Element {
                                                 ai_issues.set(Vec::new());
                                                 ai_status.set(AiStatus::Idle);
                                                 ai_message.set(String::new());
+                                                ai_revision.set(ai_revision() + 1);
                                                 schedule_save(store, save_status, save_message, save_revision);
                                             }
                                         },
@@ -556,6 +600,7 @@ pub fn Home() -> Element {
                                                 ai_issues.set(Vec::new());
                                                 ai_status.set(AiStatus::Idle);
                                                 ai_message.set(String::new());
+                                                ai_revision.set(ai_revision() + 1);
                                                 schedule_save(store, save_status, save_message, save_revision);
                                             },
                                             option { value: "US English", "US English" }
@@ -576,18 +621,12 @@ pub fn Home() -> Element {
 
                                 div { class: "editor-paper",
                                     div { class: "writing-area",
-                                        div { class: "line-numbers", aria_hidden: "true",
-                                            for line in 1..=current_text.lines().count().max(1) {
-                                                span { "{line:02}" }
-                                            }
-                                        }
                                         div { class: "text-layer",
-                                            div { class: "highlight-layer", aria_hidden: "true",
+                                            div { id: "writing-highlight", class: "highlight-layer", aria_hidden: "true",
                                                 for segment in highlight_segments(&current_text, &issues) {
                                                     if let Some(index) = segment.issue {
                                                         mark {
                                                             class: if selected_index == index { "issue-mark active" } else { "issue-mark" },
-                                                            onmouseenter: move |_| active_issue.set(Some(index)),
                                                             "{segment.text}"
                                                         }
                                                     } else {
@@ -596,6 +635,7 @@ pub fn Home() -> Element {
                                                 }
                                             }
                                             textarea {
+                                                id: "writing-input",
                                                 class: "writing-input",
                                                 value: current_text.clone(),
                                                 placeholder: "Start writing, or paste your text here…",
@@ -610,6 +650,7 @@ pub fn Home() -> Element {
                                                         ai_issues.set(Vec::new());
                                                         ai_status.set(AiStatus::Idle);
                                                         ai_message.set(String::new());
+                                                        ai_revision.set(ai_revision() + 1);
                                                         schedule_save(store, save_status, save_message, save_revision);
                                                     }
                                                 },
@@ -636,7 +677,10 @@ pub fn Home() -> Element {
                                             AiStatus::Checking => "ai-result ai-result-checking",
                                             AiStatus::Idle => "ai-result",
                                         },
-                                        "{ai_message()}"
+                                        if ai_status() == AiStatus::Checking {
+                                            span { class: "ai-spinner", aria_hidden: "true" }
+                                        }
+                                        span { "{ai_message()}" }
                                     }
                                 }
                             }
@@ -713,7 +757,10 @@ pub fn Home() -> Element {
                                     for (index, issue) in filtered_issues {
                                         button {
                                             class: if selected_index == index { "issue-item selected" } else { "issue-item" },
-                                            onclick: move |_| active_issue.set(Some(index)),
+                                            onclick: move |_| {
+                                                active_issue.set(Some(index));
+                                                lesson_open.set(true);
+                                            },
                                             onmouseenter: move |_| active_issue.set(Some(index)),
                                             div { class: "issue-item-top",
                                                 span {
@@ -731,32 +778,6 @@ pub fn Home() -> Element {
                                     }
                                 }
 
-                                if let Some(issue) = selected {
-                                    div { class: "learning-card",
-                                        div { class: "learning-heading",
-                                            span { class: "learning-icon", "i" }
-                                            span { "THE RULE" }
-                                        }
-                                        strong { "{issue.rule}" }
-                                        p { "{issue.explanation}" }
-                                        button {
-                                            class: "apply-suggestion",
-                                            onclick: {
-                                                let issue = issue.clone();
-                                                let document_id = document_id.clone();
-                                                move |_| {
-                                                    update_document(store, &document_id, |document| {
-                                                        document.content.replace_range(issue.start..issue.end, &issue.suggestion);
-                                                    });
-                                                    active_issue.set(Some(0));
-                                                    schedule_save(store, save_status, save_message, save_revision);
-                                                }
-                                            },
-                                            "Accept suggestion"
-                                            span { "→" }
-                                        }
-                                    }
-                                }
                             }
 
                             div { class: "review-footer",
@@ -787,6 +808,99 @@ pub fn Home() -> Element {
                 }
             }
 
+            if lesson_open() {
+                if let (Some(issue), Some(document_id)) = (selected, active_document_id()) {
+                    div { class: "modal-backdrop lesson-backdrop",
+                        section { class: "lesson-modal", role: "dialog", aria_modal: "true", aria_labelledby: "lesson-title",
+                            header { class: "lesson-modal-header",
+                                div {
+                                    div { class: "learning-heading",
+                                        span { class: "learning-icon", "i" }
+                                        span { "GRAMMAR LESSON" }
+                                    }
+                                    h2 { id: "lesson-title", "{issue.rule}" }
+                                }
+                                button {
+                                    class: "icon-button modal-close",
+                                    aria_label: "Close grammar lesson",
+                                    onclick: move |_| lesson_open.set(false),
+                                    "×"
+                                }
+                            }
+                            div { class: "lesson-example",
+                                span { "Original text" }
+                                strong { "“{issue.incorrect}”" }
+                            }
+                            div { class: "lesson-correction",
+                                span { "Correct text" }
+                                strong { "“{issue.suggestion}”" }
+                            }
+                            p { "{issue.explanation}" }
+                            p { "How to correct it: replace “{issue.incorrect}” with “{issue.suggestion}” in this sentence." }
+                            button {
+                                class: "apply-suggestion",
+                                onclick: {
+                                    let issue = issue.clone();
+                                    move |_| {
+                                        update_document(store, &document_id, |document| {
+                                            document.content.replace_range(issue.start..issue.end, &issue.suggestion);
+                                        });
+                                        lesson_open.set(false);
+                                        active_issue.set(Some(0));
+                                        ai_issues.set(Vec::new());
+                                        ai_status.set(AiStatus::Idle);
+                                        ai_message.set(String::new());
+                                        ai_revision.set(ai_revision() + 1);
+                                        schedule_save(store, save_status, save_message, save_revision);
+                                    }
+                                },
+                                "Accept suggestion"
+                                span { "→" }
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some((target_id, target_title)) = delete_confirmation.clone() {
+                div { class: "modal-backdrop",
+                    section { class: "settings-modal delete-modal", role: "dialog", aria_modal: "true", aria_labelledby: "delete-title",
+                        div {
+                            div { class: "eyebrow", "DELETE DOCUMENT" }
+                            h2 { id: "delete-title", "Delete this document?" }
+                            p { "“{target_title}” will be permanently removed from this device." }
+                        }
+                        footer { class: "modal-footer",
+                            button {
+                                class: "button button-quiet",
+                                onclick: move |_| delete_target.set(None),
+                                "Cancel"
+                            }
+                            button {
+                                class: "button button-danger",
+                                onclick: {
+                                    let target_id = target_id.clone();
+                                    move |_| {
+                                        let mut current = store();
+                                        current.documents.retain(|document| document.id != target_id);
+                                        let next_active = current.documents.first().map(|document| document.id.clone());
+                                        store.set(current);
+                                        if active_document_id() == Some(target_id.clone()) {
+                                            active_document_id.set(next_active);
+                                            ai_issues.set(Vec::new());
+                                            ai_status.set(AiStatus::Idle);
+                                            ai_message.set(String::new());
+                                            ai_revision.set(ai_revision() + 1);
+                                        }
+                                        delete_target.set(None);
+                                        schedule_save(store, save_status, save_message, save_revision);
+                                    }
+                                },
+                                "Delete permanently"
+                            }
+                        }
+                    }
+                }
+            }
             if settings_open() {
                 div { class: "modal-backdrop",
                     section { class: "settings-modal", role: "dialog", aria_modal: "true", aria_labelledby: "settings-title",
@@ -840,45 +954,6 @@ pub fn Home() -> Element {
                                     }
                                 }
 
-                                if let Some((target_id, target_title)) = delete_confirmation.clone() {
-                                    div { class: "modal-backdrop",
-                                        section { class: "settings-modal delete-modal", role: "dialog", aria_modal: "true", aria_labelledby: "delete-title",
-                                            div {
-                                                div { class: "eyebrow", "DELETE DOCUMENT" }
-                                                h2 { id: "delete-title", "Delete this document?" }
-                                                p { "“{target_title}” will be permanently removed from this device." }
-                                            }
-                                            footer { class: "modal-footer",
-                                                button {
-                                                    class: "button button-quiet",
-                                                    onclick: move |_| delete_target.set(None),
-                                                    "Cancel"
-                                                }
-                                                button {
-                                                    class: "button button-danger",
-                                                    onclick: {
-                                                        let target_id = target_id.clone();
-                                                        move |_| {
-                                                            let mut current = store();
-                                                            current.documents.retain(|document| document.id != target_id);
-                                                            let next_active = current.documents.first().map(|document| document.id.clone());
-                                                            store.set(current);
-                                                            if active_document_id() == Some(target_id.clone()) {
-                                                                active_document_id.set(next_active);
-                                                                ai_issues.set(Vec::new());
-                                                                ai_status.set(AiStatus::Idle);
-                                                                ai_message.set(String::new());
-                                                            }
-                                                            delete_target.set(None);
-                                                            schedule_save(store, save_status, save_message, save_revision);
-                                                        }
-                                                    },
-                                                    "Delete permanently"
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
                             }
                         }
                         if current_provider == "Ollama" {

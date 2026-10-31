@@ -1,39 +1,94 @@
-# Grammar Check
+# WordGlow
 
-A native Dioxus desktop writing checker with a multi-document editor, automatic local saving, offline common-error checks, optional AI suggestions, and US/UK English spelling preferences.
+WordGlow is a local desktop writing assistant built with Rust and Dioxus.
 
-## Run the desktop app
+It provides:
 
-From `app`:
+- Multiple documents
+- Automatic local saving
+- Real-time offline grammar and spelling checks
+- US English and UK English options
+- Optional AI suggestions
+- Grammar lessons for detected issues
+
+## Local checking
+
+The normal grammar check runs on your computer. It does not need an internet connection and does not send your document anywhere.
+
+It uses:
+
+- [Harper](https://github.com/elijah-potter/harper) for grammar rules
+- [typos](https://github.com/crate-ci/typos) for spelling corrections
+- A few application-specific common-error rules
+
+The local checker is fast and private, but it cannot detect every possible writing problem.
+
+## AI checking
+
+AI checking is optional. The app supports:
+
+- Ollama for local models
+- OpenAI
+- Anthropic
+- Google
+
+For Ollama:
+
+1. Install and start [Ollama](https://ollama.com/).
+2. Download a model, for example:
+
+   ```powershell
+   ollama pull qwen2.5:3b
+   ```
+
+3. Open the app settings and select **Ollama**.
+4. Select the installed model.
+5. Click **Check with AI**.
+
+Ollama requests stay on your computer. Requests to OpenAI, Anthropic, or Google send the document to the selected provider. API keys are kept in memory and are not saved.
+
+## Run from source
+
+Install Rust and the [Dioxus CLI](https://dioxuslabs.com/learn/0.6/getting_started/):
 
 ```powershell
-dx serve --platform desktop
+cargo install dioxus-cli --locked
 ```
 
-Or build a desktop bundle:
+Start the desktop app from the repository root:
 
 ```powershell
-dx build --platform desktop
+dx serve --platform desktop --manifest-path app/Cargo.toml
 ```
 
-Run the test suite with:
+Build a release version:
 
 ```powershell
+dx build --platform desktop --release --manifest-path app/Cargo.toml
+```
+
+## Test and format
+
+Run these commands from the repository root:
+
+```powershell
+cargo fmt --manifest-path app/Cargo.toml -- --check
+cargo check --manifest-path app/Cargo.toml
 cargo test --manifest-path app/Cargo.toml
 ```
 
-## Documents and saving
+## Documents and settings
 
-Documents and provider preferences are stored locally in `documents.json` under the user's application-data folder (`%APPDATA%\Grammar Check` on Windows). Edits save automatically after a short pause and when the editor loses focus. Use the save button in the editor toolbar to save immediately. API keys are not persisted.
+Documents and provider settings are saved locally in:
 
-## English variants and offline checking
+```text
+%APPDATA%\Grammar Check\documents.json
+```
 
-Choose US English or UK English in the editor toolbar. The built-in checker applies a small list of spelling differences for that variant, plus a small list of common typos and grammar patterns.
+On other operating systems, the file is stored in the platform's application-data directory.
 
-The offline checker is **not AI** and does not use a third-party spelling/grammar library or full dictionary. It matches known text patterns and gives fixed corrections. It is fast, private, and works without internet or a model, but cannot understand context and will miss many mistakes. The UI labels this as a basic offline check.
+Edits are saved automatically after a short pause and when the editor loses focus. The save button can be used to save immediately.
 
-For context-aware suggestions, choose **Check with AI** to send the current document to the selected model. Ollama's `/api/tags` endpoint discovers local models. OpenAI, Anthropic, and Google model-list and text-check APIs are also supported. AI requests send document text directly to the configured provider; local Ollama keeps the request on your machine. API keys are kept in memory only.
+## Builds
 
-## Cross-platform builds
-
-The GitHub Actions workflow runs tests and builds the desktop app on Windows, macOS, and Linux for pushes to `main`/`master`, pull requests, or manual dispatch. Downloadable build artifacts are uploaded for each platform. Builds are unsigned; macOS notarization and signed installers require platform certificates and are not configured.
+GitHub Actions tests and builds the app for Windows, macOS, and Linux. Builds are unsigned. Signed installers and macOS notarization are not configured.

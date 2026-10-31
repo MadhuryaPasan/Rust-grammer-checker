@@ -152,12 +152,25 @@ pub async fn check_text(request: TextCheckRequest<'_>) -> Result<Vec<Issue>, Str
         .json(&body)
         .send()
         .await
-        .map_err(|error| format!("Could not reach {}: {error}", request.provider))?;
+        .map_err(|error| {
+            if request.provider == "Ollama" && error.is_connect() {
+                format!(
+                    "Could not reach Ollama at {url}. Start Ollama with `ollama serve`, \
+                     then confirm the endpoint is correct and that the model `{}` is installed.",
+                    request.model
+                )
+            } else {
+                format!("Could not reach {}: {error}", request.provider)
+            }
+        })?;
 
     let status = response.status();
     if !status.is_success() {
         let detail = match status.as_u16() {
             401 | 403 => "Check the API key and its permissions.",
+            404 if request.provider == "Ollama" => {
+                "Ollama could not find this model. Pull it with `ollama pull <model>` or choose an installed model."
+            }
             404 => "Check that the model name and API endpoint are correct.",
             429 => "The provider rate limit was reached. Wait briefly and try again.",
             _ => "Check the provider settings and try again.",

@@ -62,8 +62,9 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path release-assets -Force | Out-Null
+          $buildDir = "app/target/dx/grammar-check/release/windows"
           Compress-Archive `
-            -Path app/target/dx/grammar-check/release/windows/app/* `
+            -Path "$buildDir/*" `
             -DestinationPath release-assets/grammar-check-windows-${env:RUNNER_ARCH}.zip
 
       - name: Package macOS build
@@ -71,14 +72,18 @@ jobs:
         run: |
           mkdir -p release-assets
           archive="grammar-check-macos-${RUNNER_ARCH}.tar.gz"
-          tar -czf "release-assets/$archive" -C app/target/dx/grammar-check/release/macos app
+          build_dir="app/target/dx/grammar-check/release/macos"
+          test -d "$build_dir"
+          tar -czf "release-assets/$archive" -C "$build_dir" .
 
       - name: Package Linux build
         if: runner.os == 'Linux'
         run: |
           mkdir -p release-assets
           archive="grammar-check-linux-${RUNNER_ARCH}.tar.gz"
-          tar -czf "release-assets/$archive" -C app/target/dx/grammar-check/release/linux app
+          build_dir="app/target/dx/grammar-check/release/linux"
+          test -d "$build_dir"
+          tar -czf "release-assets/$archive" -C "$build_dir" .
 
       - uses: actions/upload-artifact@v4
         with:
