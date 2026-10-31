@@ -1,3 +1,9 @@
+use harper_core::{
+    linting::{LintGroup, Linter, Suggestion},
+    Dialect, Document as HarperDocument,
+};
+use std::sync::{Mutex, OnceLock};
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Category {
     Grammar,
@@ -594,8 +600,3 @@ mod tests {
         );
     }
 }
-use harper_core::{
-    linting::{LintGroup, Linter, Suggestion},
-    Dialect, Document as HarperDocument,
-};
-use std::sync::{Mutex, OnceLock};
