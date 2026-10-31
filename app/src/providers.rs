@@ -142,8 +142,14 @@ pub async fn check_text(request: TextCheckRequest<'_>) -> Result<Vec<Issue>, Str
         .ok_or_else(|| "Temperature must be a number between 0 and 1.".to_owned())?;
 
     let (url, headers, body) = chat_request(request, temperature)?;
+    let request_timeout = if request.provider == "Ollama" {
+        Duration::from_secs(60 * 60) // 1 hour for local models
+    } else {
+        Duration::from_secs(90)
+    };
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(90))
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(request_timeout)
         .build()
         .map_err(|error| format!("Could not create the HTTP client: {error}"))?;
     let response = client
@@ -153,7 +159,12 @@ pub async fn check_text(request: TextCheckRequest<'_>) -> Result<Vec<Issue>, Str
         .send()
         .await
         .map_err(|error| {
-            if request.provider == "Ollama" && error.is_connect() {
+            if request.provider == "Ollama" && error.is_timeout() {
+                format!(
+                    "Ollama did not finish within the time limit. The model `{}` may be too large for this machine.",
+                    request.model
+                )
+            } else if request.provider == "Ollama" && error.is_connect() {
                 format!(
                     "Could not reach Ollama at {url}. Start Ollama with `ollama serve`, \
                      then confirm the endpoint is correct and that the model `{}` is installed.",

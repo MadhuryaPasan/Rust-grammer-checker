@@ -1,5 +1,5 @@
 #define AppName "Grammar Check"
-#define AppVersion "0.2.0"
+#define AppVersion "0.2.4"
 #define AppPublisher "MadhuryaPasan"
 #define AppExeName "grammar-check.exe"
 
