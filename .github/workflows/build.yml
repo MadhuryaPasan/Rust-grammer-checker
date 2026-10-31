@@ -1,0 +1,111 @@
+name: Desktop builds
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Test and build (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows
+          - os: macos-latest
+            platform: macos
+          - os: ubuntu-24.04
+            platform: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app
+
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential curl file libayatana-appindicator3-dev libssl-dev libwebkit2gtk-4.1-dev libxdo-dev librsvg2-dev patchelf
+
+      - name: Check formatting
+        run: cargo fmt --manifest-path app/Cargo.toml -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --manifest-path app/Cargo.toml --all-targets --all-features --locked -- -D warnings
+
+      - name: Run tests
+        run: cargo test --manifest-path app/Cargo.toml --all-targets --all-features --locked
+
+      - name: Install Dioxus CLI
+        run: cargo install dioxus-cli --locked
+
+      - name: Build desktop application
+        working-directory: app
+        run: dx build --platform desktop --release
+
+      - name: Package Windows build
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path release-assets -Force | Out-Null
+          Compress-Archive `
+            -Path app/target/dx/grammar-check/release/windows/app/* `
+            -DestinationPath release-assets/grammar-check-windows-${env:RUNNER_ARCH}.zip
+
+      - name: Package macOS build
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p release-assets
+          archive="grammar-check-macos-${RUNNER_ARCH}.tar.gz"
+          tar -czf "release-assets/$archive" -C app/target/dx/grammar-check/release/macos app
+
+      - name: Package Linux build
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p release-assets
+          archive="grammar-check-linux-${RUNNER_ARCH}.tar.gz"
+          tar -czf "release-assets/$archive" -C app/target/dx/grammar-check/release/linux app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: grammar-check-${{ matrix.platform }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-release:
+    name: Publish GitHub release
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download platform packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: grammar-check-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true
+          files: artifacts/*
