@@ -67,6 +67,13 @@ jobs:
             -Path "$buildDir/*" `
             -DestinationPath release-assets/grammar-check-windows-${env:RUNNER_ARCH}.zip
 
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install innosetup --yes --no-progress
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\grammar-check.iss
+
       - name: Package macOS build
         if: runner.os == 'macOS'
         run: |

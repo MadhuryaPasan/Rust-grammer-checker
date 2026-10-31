@@ -91,4 +91,6 @@ Edits are saved automatically after a short pause and when the editor loses focu
 
 ## Builds
 
-GitHub Actions tests and builds the app for Windows, macOS, and Linux. Builds are unsigned. Signed installers and macOS notarization are not configured.
+GitHub Actions tests and builds the app for Windows, macOS, and Linux. Windows builds include a portable ZIP and an Inno Setup installer. The installer installs
+the executable and its required assets together and creates Start menu and optional desktop
+shortcuts. Builds are unsigned, and macOS notarization is not configured.
